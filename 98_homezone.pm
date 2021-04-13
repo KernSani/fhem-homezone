@@ -3,7 +3,7 @@
 #
 #     98_homezone.pm
 #     An FHEM Perl module that implements a zone concept in FHEM
-#	  inspired by https://smartisant.com/research/presence/index.php
+#     inspired by https://smartisant.com/research/presence/index.php
 #
 #     Copyright by KernSani
 #
@@ -21,32 +21,44 @@
 #     along with fhem.  If not, see <http://www.gnu.org/licenses/>.
 #
 ##############################################################################
-# 	  Changelog:
-#		0.0.10:	Bugfix			-	Multiline perl
-#				Feature			-	Optimized boxMode 
-#		0.0.09:	Bugfix			-	Adjacent zone stuck at occupied 100 in some cases 
-#				Bugfix			-	boxMode was stopped by timer in adjacent zone
-#				Feature			-	Allow Perl in Commands (incl. big textfield to edit)
-#				Bugfix			-	adjacent or children attributes could get lost at reload	
-#		0.0.08:	Feature			-	Added disabled-Attributes and set active/inactive
-#				Feature			-	Added boxMode
-#		0.0.07:	Bugfix			-	Fixed a minor bug with lastLumi reading not updating properly
-#				Feature			-	Support for multiple doors (wasp-in-a-box)
-#		0.0.06:	Bugfix 			- 	Luminance devices not found on startup
-#				Bugfix 			- 	Lumithreshold not properly determined
-#				Maintainance 	- 	Improved Logging
-#				Bugfix 			- 	Parent devices not updating properly
-#				Feature			-	Added absenceEvent
-#		0.0.05:	Maintenance 	-	Code cleanup
-#				Maintenance 	-	Attribute validation and userattr cleanup
-#				Bugfix			-	Fixed bug when "close" comes after "occupancy"
-#				Feature			-	Some additional readings
-#		0.0.04:	Feature			-	Added state-dependant commands
-#				Feature			-	Added luminance functions
-#		0.0.03:	Feature			-	Added basic version of daytime-dependant decay value
-#		0.0.02:	Feature			-	Added "children" attribute
-#				Feature			-	List of regexes for Event Attributes
-#	  	0.0.01:	initial version
+#     Changelog:
+#       0.0.15: Maintenance     -   Code cleanup
+#       0.0.14: Bugfix          -   Unnecessary log messages (Execution failed) removed
+#               Bugfix          -   Fixed a bug in attribute validation (occupanyEvent)
+#               Feature         -   Configure that "asleep" roommates trigger "present" (hz_sleepRoommates)
+#       0.0.13: Bugfix          -   Fixed another bug with diableOnlyCmds
+#               Bugfix          -   Fixed a perl warning (uninitialized value in numeric)
+#               Feature         -   Added possibility to set inactive for <seconds>
+#       0.0.12: Bugfix          -   Fixed buggy diableOnlyCmds
+#               Feature         -   $name allowed in perl commands
+#               Feature         -   new reading lastChild
+#       0.0.11: Bugfix          -   in boxMode incorrectly triggered presence from adjacent zone
+#               Feature         -   added diableOnlyCmds Attribute
+#       0.0.10: Bugfix          -   Multiline perl
+#               Feature         -   Optimized boxMode
+#       0.0.09: Bugfix          -   Adjacent zone stuck at occupied 100 in some cases
+#               Bugfix          -   boxMode was stopped by timer in adjacent zone
+#               Feature         -   Allow Perl in Commands (incl. big textfield to edit)
+#               Bugfix          -   adjacent or children attributes could get lost at reload
+#       0.0.08: Feature         -   Added disabled-Attributes and set active/inactive
+#               Feature         -   Added boxMode
+#       0.0.07: Bugfix          -   Fixed a minor bug with lastLumi reading not updating properly
+#               Feature         -   Support for multiple doors (wasp-in-a-box)
+#       0.0.06: Bugfix          -   Luminance devices not found on startup
+#               Bugfix          -   Lumithreshold not properly determined
+#               Maintainance    -   Improved Logging
+#               Bugfix          -   Parent devices not updating properly
+#               Feature         -   Added absenceEvent
+#       0.0.05: Maintenance     -   Code cleanup
+#               Maintenance     -   Attribute validation and userattr cleanup
+#               Bugfix          -   Fixed bug when "close" comes after "occupancy"
+#               Feature         -   Some additional readings
+#       0.0.04: Feature         -   Added state-dependant commands
+#               Feature         -   Added luminance functions
+#       0.0.03: Feature         -   Added basic version of daytime-dependant decay value
+#       0.0.02: Feature         -   Added "children" attribute
+#               Feature         -   List of regexes for Event Attributes
+#       0.0.01: initial version
 #
 ##############################################################################
 
@@ -57,45 +69,60 @@ use warnings;
 
 #use Data::Dumper;
 
-my $version = "0.0.9";
+my $version = "0.0.15";
+
+# some constants
+use constant {
+    LOG_CRITICAL => 0,
+    LOG_ERROR    => 1,
+    LOG_WARNING  => 2,
+    LOG_SEND     => 3,
+    LOG_RECEIVE  => 4,
+    LOG_DEBUG    => 5,
+};
+my $EMPTY = q{};
+my $SPACE = q{ };
 
 ###################################
-sub homezone_Initialize($) {
+sub homezone_Initialize {
     my ($hash) = @_;
     my $name = $hash->{NAME};
 
     # Module specific attributes
-    my @homezone_attr =
-      (     "hz_openEvent"
-          . " hz_closedEvent"
-          . " hz_occupancyEvent"
-          . " hz_absenceEvent"
-          . " hz_luminanceReading"
-          . " hz_lumiThreshold"
-          . " hz_decay"
-          . " hz_adjacent"
-          . " hz_state"
-          . " hz_dayTimes"
-          . " hz_multiDoor"
-          . " hz_children"
-          . " disable:0,1"
-          . " disabledForIntervals"
-          . " hz_boxMode:0,1" );
+    my @homezone_attr
+        = (   "hz_openEvent"
+            . " hz_closedEvent"
+            . " hz_occupancyEvent"
+            . " hz_absenceEvent"
+            . " hz_luminanceReading"
+            . " hz_lumiThreshold"
+            . " hz_decay"
+            . " hz_adjacent"
+            . " hz_state"
+            . " hz_dayTimes"
+            . " hz_multiDoor"
+            . " hz_children"
+            . " hz_disableOnlyCmds:0,1"
+            . " disable:0,1"
+            . " disabledForIntervals"
+            . " hz_sleepRoommates"
+            . " hz_boxMode:0,1" );
 
     $hash->{SetFn}    = "homezone_Set";
     $hash->{DefFn}    = "homezone_Define";
     $hash->{UndefFn}  = "homezone_Undefine";
     $hash->{NotifyFn} = "homezone_Notify";
     $hash->{AttrFn}   = "homezone_Attr";
-    $hash->{AttrList} = join( " ", @homezone_attr ) . " " . $readingFnAttributes;
+    $hash->{AttrList} = join( $SPACE, @homezone_attr ) . $SPACE . $readingFnAttributes;
+    return;
 }
 
 ###################################
-sub homezone_Define($$) {
+sub homezone_Define {
 
     my ( $hash, $def ) = @_;
-    my @a = split( "[ \t][ \t]*", $def );
-
+    my @a = split( /[ \t][ \t]*/xsm, $def );
+ 
     my $usage = "syntax: define <name> homezone";
 
     my ( $name, $type ) = @a;
@@ -106,42 +133,50 @@ sub homezone_Define($$) {
     $hash->{VERSION} = $version;
     $hash->{NAME}    = $name;
 
-    CommandAttr( undef, $name . " hz_state 100:present 50:likely 1:unlikely 0:absent" )
-      if ( AttrVal( $name, "hz_state", "" ) eq "" );
-
-    CommandAttr( undef,
-        $name
-          . " devStateIcon present:user_available\@green likely:user_available\@lightgreen unlikely:user_unknown\@yellow absent:user_away"
-    ) if ( AttrVal( $name, "devStateIcon", "" ) eq "" );
-
+    # set default values for some attributes
+    if ( AttrVal( $name, "hz_state", $EMPTY ) eq $EMPTY ) {
+        CommandAttr( undef, $name . " hz_state 100:present 50:likely 1:unlikely 0:absent" );
+    }
+    if ( AttrVal( $name, "devStateIcon", $EMPTY ) eq $EMPTY ) {
+        CommandAttr( undef,
+            $name
+                . " devStateIcon present:user_available\@green likely:user_available\@lightgreen unlikely:user_unknown\@yellow absent:user_away"
+        );
+    }
+ 
     my $dt = "05:00|morning 10:00|day 14:00|afternoon 18:00|evening 23:00|night";
     my @hm = devspec2array("TYPE=HOMEMODE");
-    $dt = AttrVal( $hm[1], "homeDayTimes", "" ) if $hm[1];
+    if ( $hm[1] ) {
+        $dt = AttrVal( $hm[1], "homeDayTimes", $EMPTY );
+    }
+    if ( AttrVal( $name, "hz_dayTimes", $EMPTY ) eq $EMPTY ) {
+        CommandAttr( undef, $name . " hz_dayTimes $dt" );
+    }
 
-    CommandAttr( undef, $name . " hz_dayTimes $dt" )
-      if ( AttrVal( $name, "hz_dayTimes", "" ) eq "" );
-
-    return undef;
+    return;
 }
 ###################################
-sub homezone_Undefine($$) {
-
+sub homezone_Undefine {
     my ( $hash, $name ) = @_;
+
     RemoveInternalTimer($hash);
-    return undef;
+    return;
 }
 ###################################
-sub homezone_Notify($$) {
+sub homezone_Notify {
     my ( $hash, $dhash ) = @_;
     my $name = $hash->{NAME};    # own name / hash
     my $dev  = $dhash->{NAME};
 
-    return undef if ( IsDisabled($name) );    # Return without any further action if the module is disabled
+    # Return without any further action if the module is disabled
+    if ( IsDisabled($name) && AttrVal( $name, "hz_disableOnlyCmds", 0 ) == 0 ) {
+        return;
+    }
 
     my $events = deviceEvents( $dhash, 1 );
 
     # Check if children report new state
-    my @children = split( ",", AttrVal( $name, "hz_children", "NA" ) );
+    my @children = split( /,/xsm, AttrVal( $name, "hz_children", "NA" ) );
     if ( grep( /$dev/, @children ) && grep( /occupied/, @{$events} ) ) {
         Log3 $name, 5, "[homezone - $name]: occupied event of child detected";
         my $max = 0;
@@ -160,14 +195,33 @@ sub homezone_Notify($$) {
     if ( AttrVal( $name, "hz_boxMode", 0 ) > 0 ) {
         my @zones = split( ",", AttrVal( $name, "hz_adjacent", "NA" ) );
         if ( grep( /$dev/, @zones ) && grep( /occupied/, @{$events} ) ) {
-			my $r = ReadingsVal($dev,"lastZone",""); 
+            my $r = ReadingsVal( $dev, "lastZone", "" );
             Log3 $name, 5, "[homezone - $name]: occupied event of adjacent room $dev detected ($r)";
-			if ($r ne "timer") {
-				#homezone_setOpen( $hash, undef );
-				homezone_setOcc( $hash, 99, $dev );
-			}
+            if ( $r ne "timer" && ReadingsVal( $name, "occupied", 0 ) == 100 ) {
+
+                #homezone_setOpen( $hash, undef );
+                homezone_setOcc( $hash, 99, $dev );
+            }
             return undef;
         }
+    }
+
+    # check for roommates asleep
+    my @rm = split( ",", AttrVal( $name, "hz_sleepRoommates", "NA" ) );
+
+    if ( grep( /$dev/, @rm ) && grep( /state:.asleep/, @{$events} ) ) {
+        Log3 $name, 5, "[homezone - $name]: roommate $dev asleep detected" . Dumper($events);
+        homezone_setOcc( $hash, 100, $dev );
+    }
+    if ( grep( /$dev/, @rm ) && !( grep( /state:.asleep/, @{$events} ) ) ) {
+        Log3 $name, 5, "[homezone - $name]: roommate $dev not asleep anymore";
+        my $sleepers = @rm;
+        my $i        = 0;
+        foreach my $rr (@rm) {
+            last if ( ReadingsVal( $rr, "state", "" ) eq "asleep" );
+            $i++;
+        }
+        homezone_setOcc( $hash, 99, $dev ) if ( ReadingsNum( $name, "occupied", 0 ) == 100 && $i == $sleepers );
     }
 
     # Check open/close/occupancy Events
@@ -228,10 +282,15 @@ sub homezone_Notify($$) {
             my ( $occDev, $occEv ) = split( ":", $o, 2 );
             if ( $dev =~ /$occDev/ && $event =~ /$occEv/ ) {
                 Log3 $name, 5,
-                  "[homezone - $name]: set occupancy in condition " . ReadingsVal( $name, "condition", "" );
+                    "[homezone - $name]: set occupancy in condition " . ReadingsVal( $name, "condition", "" );
+
                 #homezone_setClosed( $hash, undef ) if AttrVal( $name, "hz_boxMode", 0 ) > 0;
-				my $occ= 99;
-				$occ = 100 if AttrVal( $name, "hz_boxMode", 0 ) > 0;
+                my $occ = 99;
+                $occ = 100 if AttrVal( $name, "hz_boxMode", 0 ) > 0;
+                my @rm = split( ",", AttrVal( $name, "hz_sleepRoommates", "NA" ) );
+                foreach my $rr (@rm) {
+                    $occ = 100 if ReadingsVal( $rr, "state", "" ) eq "asleep";
+                }
                 homezone_setOcc( $hash, $occ );
                 last;
             }
@@ -240,7 +299,7 @@ sub homezone_Notify($$) {
             my ( $absDev, $absEv ) = split( ":", $o, 2 );
             if ( $dev =~ /$absDev/ && $event =~ /$absEv/ ) {
                 Log3 $name, 5, "[homezone - $name]: set absence in condition " . ReadingsVal( $name, "condition", "" );
-                homezone_setOcc( $hash, 0 );
+                homezone_setOcc( $hash, 0, "absence" );
                 last;
             }
         }
@@ -257,7 +316,7 @@ sub homezone_setOcc($$;$) {
 
     $lastChild = "self" unless $lastChild;
 
-    if ( ReadingsVal( $name, "condition", "" ) eq "closed" && $lastChild ne "timer" ) {
+    if ( ReadingsVal( $name, "condition", "" ) eq "closed" && $lastChild ne "timer" && $lastChild ne "absence" ) {
         $occ = 100;
     }
 
@@ -283,24 +342,31 @@ sub homezone_setOcc($$;$) {
         $lumi = ReadingsNum( $d, $r, 0 );
     }
 
-    if ( $stat ne $oldState ) {
+    if ( $stat ne $oldState && IsDisabled($name) == 0 ) {
         my $cmd = AttrVal( $name, "hz_cmd_" . $stat, "" );
-		$cmd =~ s/^(\n|[ \t])*//;# Strip space or \n at the begginning
-		$cmd =~ s/[ \t]*$//;
+        $cmd =~ s/^(\n|[ \t])*//;    # Strip space or \n at the begginning
+        $cmd =~ s/[ \t]*$//;
+
         #my $lumiThresholds = AttrVal( $name, "hz_lumiThreshold_" . $stat, "" );
         #my $lumiTh = ReadingsVal( $name, "hz_lumiThreshold", 0 );
-        my ( $low, $high ) = split( ":",
+        my ( $low, $high )
+            = split( ":",
             AttrVal( $name, "hz_lumiThreshold_" . $stat, AttrVal( $name, "hz_lumiThreshold", "0:9999999999" ) ) );
 
         $low  = 0         if ( !$low );
         $high = 999999999 if ( !$high );
         Log3 $name, 5, "[homezone - $name]: Luminance: $lumi Threshold: $low-$high";
-        Log3 $name, 5, "[homezone - $name]: Luminance: $lumi Threshold: $low-$high";
+
         if ( $lumi >= $low and $lumi <= $high ) {
-            my $ret = AnalyzeCommandChain( undef, "$cmd" ) unless ( $cmd eq "" or $cmd =~ m/^{.*}$/s);
-			Log3 $name, 1, "[homezone - $name]: Command execution failed: $ret" if ( defined($ret) );
-			$ret = AnalyzePerlCommand( undef, $cmd ) if ( $cmd =~ m/^{.*}$/s);
-			Log3 $name, 1, "[homezone - $name]: Perl execution failed: $ret" if ( defined($ret) );
+            my %specials = ( "%name" => $name );
+            $cmd = EvalSpecials( $cmd, %specials );
+            if ( $cmd ne '' ) {
+
+                my $ret = AnalyzeCommandChain( undef, "$cmd" ) unless ( $cmd eq "" or $cmd =~ m/^{.*}$/s );
+                Log3 $name, 1, "[homezone - $name]: Command execution failed: $ret" if ($ret);
+                $ret = AnalyzePerlCommand( undef, $cmd ) if ( $cmd =~ m/^{.*}$/s );
+                Log3 $name, 1, "[homezone - $name]: Perl execution failed: $ret" if ($ret);
+            }
         }
     }
 
@@ -315,13 +381,21 @@ sub homezone_setOcc($$;$) {
             }
         }
     }
+    my $leafChild = ReadingsVal( $lastChild, "lastChild", "" );
+    if (    $leafChild eq ""
+        and AttrVal( $name, "hz_children", "NA" ) ne "NA"
+        and grep( $lastChild, split( ",", AttrVal( $name, "hz_children", "NA" ) ) ) )
+    {
+        $leafChild = $lastChild;
+    }
 
     # update readings
     readingsBeginUpdate($hash);
-    readingsBulkUpdate( $hash, "occupied", $occ );
-    readingsBulkUpdate( $hash, "state",    $stat );
-    readingsBulkUpdate( $hash, "lastLumi", $lumi ) if $lumiReading ne "";
-    readingsBulkUpdate( $hash, "lastZone", $lastChild );
+    readingsBulkUpdate( $hash, "occupied",  $occ );
+    readingsBulkUpdate( $hash, "state",     $stat );
+    readingsBulkUpdate( $hash, "lastLumi",  $lumi ) if $lumiReading ne "";
+    readingsBulkUpdate( $hash, "lastZone",  $lastChild );
+    readingsBulkUpdate( $hash, "lastChild", $leafChild ) if $leafChild ne "";
     readingsEndUpdate( $hash, 1 );
 
     homezone_startTimer($hash);
@@ -338,18 +412,19 @@ sub homezone_setOpen($$) {
     }
     readingsSingleUpdate( $hash, "condition", $cond, 1 );
     if ( ReadingsNum( $name, "occupied", 0 ) == 100 ) {
-		# check if adjacent was set to 100 by current zone 
-		my $adj = AttrVal( $name, "hz_adjacent", "" );
-		if ( $adj ne "" && AttrVal( $name, "hz_boxMode", 0 ) == 0 ) {
-			my @adj = split( ",", $adj );
-			foreach $a (@adj) {
-				my $aOcc = ReadingsNum( $a, "occupied", 0 );
-				my $alz = ReadingsVal( $a, "lastZone", "" );
-				if ( $aOcc == 100 && $alz eq $name ) {
-					AnalyzeCommandChain( undef, "set $a open" );
-				}
-			}
-		}
+
+        # check if adjacent was set to 100 by current zone
+        my $adj = AttrVal( $name, "hz_adjacent", "" );
+        if ( $adj ne "" && AttrVal( $name, "hz_boxMode", 0 ) == 0 ) {
+            my @adj = split( ",", $adj );
+            foreach $a (@adj) {
+                my $aOcc = ReadingsNum( $a, "occupied", 0 );
+                my $alz = ReadingsVal( $a, "lastZone", "" );
+                if ( $aOcc == 100 && $alz eq $name ) {
+                    AnalyzeCommandChain( undef, "set $a open" );
+                }
+            }
+        }
         homezone_setOcc( $hash, 99 );
     }
 
@@ -373,13 +448,22 @@ sub homezone_Set($@) {
     my $name = $hash->{NAME};
 
     return "no set value specified" if ( int(@a) < 2 );
-    my $usage = "Unknown argument $a[1], choose one of active:noArg inactive:noArg occupied closed open";
+    my $usage = "Unknown argument $a[1], choose one of active:noArg inactive occupied closed open";
 
     if ( $a[1] eq "inactive" ) {
-        RemoveInternalTimer($hash);
+        return "If an argument is given for $a[1] it has to be a number (in seconds)"
+            if ( $a[2] && !( $a[2] =~ /^\d+$/ ) );
+        RemoveInternalTimer( $hash, "homezone_ProcessTimer" );
         readingsSingleUpdate( $hash, "state", "inactive", 1 );
+        if ( $a[2] ) {
+            Log3 $name, 1, "Timer: $a[2]";
+            my $tm = int( gettimeofday() ) + int( $a[2] );
+            $hash->{HELPER}{ActiveTimer} = "inactive";
+            InternalTimer( $tm, 'homezone_setActive', $hash, 0 );
+        }
     }
     elsif ( $a[1] eq "active" ) {
+        RemoveInternalTimer( $hash, "homezone_setActive" );
         if ( IsDisabled($name) ) {    #&& !AttrVal( $name, "disable", undef ) ) {
             readingsSingleUpdate( $hash, "state", "initialized", 1 );
         }
@@ -391,26 +475,39 @@ sub homezone_Set($@) {
         if ( $a[2] < 0 or $a[2] > 100 ) {
             return "Argument has to be between 0 and 100";
         }
-        homezone_setOcc( $hash, $a[2], $a[3] ) unless IsDisabled($name);
+        homezone_setOcc( $hash, $a[2], $a[3] )
+            unless ( IsDisabled($name) && AttrVal( $name, "hz_disableOnlyCmds", 0 ) == 0 );
     }
     elsif ( $a[1] eq "open" ) {
         return "Argument has to be a number between 1 and $hash->{HELPER}{doors}"
-          if $hash->{HELPER}{doors} > 1 and $a[2] < 1
-          or $a[2] > $hash->{HELPER}{doors};
-        homezone_setOpen( $hash, $a[2] ) unless IsDisabled($name);
+            if (
+            $hash->{HELPER}{doors}
+            && (   $hash->{HELPER}{doors} > 1 and $a[2] < 1
+                or $a[2] > $hash->{HELPER}{doors} )
+            );
+        homezone_setOpen( $hash, $a[2] ) unless ( IsDisabled($name) && AttrVal( $name, "hz_disableOnlyCmds", 0 ) == 0 );
     }
     elsif ( $a[1] eq "closed" ) {
         return "Argument has to be a number between 1 and $hash->{HELPER}{doors}"
-          if $hash->{HELPER}{doors} > 1 and $a[2] < 1
-          or $a[2] > $hash->{HELPER}{doors};
-        homezone_setClosed( $hash, $a[2] ) unless IsDisabled($name);
+            if $hash->{HELPER}{doors} > 1 and $a[2] < 1
+            or $a[2] > $hash->{HELPER}{doors};
+        homezone_setClosed( $hash, $a[2] )
+            unless ( IsDisabled($name) && AttrVal( $name, "hz_disableOnlyCmds", 0 ) == 0 );
     }
     else {
         return $usage;
     }
     return undef;
 }
+###################################
+sub homezone_setActive($) {
+    my ($hash) = @_;
+    my $name = $hash->{NAME};
+    if ( IsDisabled($name) ) {
+        readingsSingleUpdate( $hash, "state", "initialized", 1 );
+    }
 
+}
 ###################################
 sub homezone_startTimer($) {
     my ($hash) = @_;
@@ -460,7 +557,7 @@ sub homezone_Attr($) {
             $bVal =~ s/\$SUNRISE/00:00/;
             $bVal =~ s/\$SUNSET/00:00/;
             return "$aName must be a space separated list of time|text pairs"
-              if ( $bVal !~ /^([0-2]\d:[0-5]\d\|[\w\-äöüß\.]+)(\s[0-2]\d:[0-5]\d\|[\w\-äöüß\.]+){0,}$/i );
+                if ( $bVal !~ /^([0-2]\d:[0-5]\d\|[\w\-äöüß\.]+)(\s[0-2]\d:[0-5]\d\|[\w\-äöüß\.]+){0,}$/i );
 
             my @newVals = map { ( split /\|/, $_ )[1] } split( " ", $aVal );
             my $userattr = AttrVal( $name, "userattr", "" );
@@ -489,7 +586,7 @@ sub homezone_Attr($) {
         elsif ( $aName eq "hz_state" ) {
             foreach my $a ( split( " ", $aVal ) ) {
                 return "$aName must be a space separated list of probability:text pairs"
-                  if ( !( $a =~ /(1\d\d|\d\d|\d):([\w\-äöüß\.]+)/ ) );
+                    if ( !( $a =~ /(1\d\d|\d\d|\d):([\w\-äöüß\.]+)/ ) );
             }
             my $oVals = AttrVal( $name, "hz_state", "" );
             my @oldVals = map { ( split /:/, $_ )[1] } split( " ", $oVals );
@@ -506,7 +603,7 @@ sub homezone_Attr($) {
                     Log3 $name, 5, "[homezone - $name]: no update for $text ";
                 }
                 else {
-                    my $ua = " hz_cmd_" . $text.":textField-long";
+                    my $ua = " hz_cmd_" . $text . ":textField-long";
                     $userattr .= $ua;
                     my $ua2 = " hz_lumiThreshold_" . $text;
                     $userattr .= $ua2;
@@ -529,24 +626,38 @@ sub homezone_Attr($) {
 
         }
         elsif (
-            (
-                   $aName eq "hz_openEvent"
+            (      $aName eq "hz_openEvent"
                 or $aName eq "hz_closedEvent"
-                or $aName eq "hz_ocuupancyEvent"
+                or $aName eq "hz_occupancyEvent"
                 or $aName eq "hz_absenceEvent"
             )
             && $init_done
-          )
+            )
         {
-            foreach my $a ( split( ",", $aVal ) ) {
-                my ( $d, $e ) = split( ":", $a );
-                return "$d is not a valid device" if ( devspec2array($d) eq $d && !$defs{$d} );
-                return "Event not defined for $d" if ( !$e or $e eq "" );
+            my @aw = split( " ", ReadingsVal( $name, "associatedWith", "" ) );
+            my @md = split( " ", $aVal );
+            foreach my $ma (@md) {
+                Log3 $name, 1, $ma;
+                foreach my $a ( split( ",", $ma ) ) {
+                    my ( $d, $e ) = split( ":", $a, 2 );
+                    return "$d is not a valid device" if ( devspec2array($d) eq $d && !$defs{$d} );
+                    return "Event not defined for $d" if ( !$e or $e eq "" );
+
+                    foreach my $awd ( devspec2array($d) ) {
+                        push( @aw, $awd ) unless grep ( /$d/, @aw );
+                    }
+                }
             }
+
+            readingsSingleUpdate( $hash, "associatedWith", join( " ", @aw ), 0 );
         }
         elsif ( $aName eq "hz_luminanceReading" && $init_done ) {
             my ( $d, $r ) = split( ":", $aVal );
             return "Couldn't get a luminance value for reading $r of device $d" if ReadingsVal( $d, $r, "" ) eq "";
+
+            my @aw = split( " ", ReadingsVal( $name, "associatedWith", "" ) );
+            push( @aw, $d ) unless grep ( /$d/, @aw );
+            readingsSingleUpdate( $hash, "associatedWith", join( " ", @aw ), 0 );
         }
         elsif ( $aName =~ /hz_lumiThreshold.*/ ) {
             return "$aName has to be in the form <low>:<high>" unless $aVal =~ /.*:.*/;
@@ -554,19 +665,37 @@ sub homezone_Attr($) {
         elsif ( $aName =~ /hz_decay.*/ ) {
             return "$aName should be a number (in seconds)" unless $aVal =~ /^\d+$/;
         }
-        elsif ( ($aName eq "hz_adjacent" or $aName eq "hz_children" ) && $init_done) {
+        elsif ( ( $aName eq "hz_adjacent" or $aName eq "hz_children" ) && $init_done ) {
             foreach my $a ( split( ",", $aVal ) ) {
                 return "$a is not a homezone Device" if InternalVal( $a, "TYPE", "" ) eq "";
+
+                my @aw = split( " ", ReadingsVal( $name, "associatedWith", "" ) );
+                push( @aw, $a ) unless grep ( /$a/, @aw );
+                readingsSingleUpdate( $hash, "associatedWith", join( " ", @aw ), 0 );
+
             }
         }
-		elsif ($aName =~ /hz_cmd_.*/) {
-			if ($aVal =~ m/^{.*}$/s) {
-				my %specials;
-				my $err = perlSyntaxCheck($aVal, %specials);
-				return $err if($err);
-			}
-		
-		}
+        elsif ( $aName =~ /hz_cmd_.*/ ) {
+            if ( $aVal =~ m/^{.*}$/s ) {
+                my %specials = ( "%name" => $name );
+
+                #my $cmd = EvalSpecials($aVal, %specials);
+                my $err = perlSyntaxCheck( $aVal, %specials );
+                return $err if ($err);
+            }
+            my @aw = split( " ", ReadingsVal( $name, "associatedWith", "" ) );
+            my @cmds = split( " ", $aVal );
+            foreach my $cm (@cmds) {
+                Log3( $name, 1, "[homezone - $name]: Checking if '$cm' is a device'" );
+                if ( exists( $defs{$cm} ) ) {
+                    Log3( $name, 1, "[homezone - $name]:Yes, '$cm' is a device'" );
+                    push( @aw, $cm );
+                }
+            }
+
+            readingsSingleUpdate( $hash, "associatedWith", join( " ", @aw ), 0 );
+
+        }
         elsif ( $aName eq "disable" ) {
             if ( $aVal == 1 ) {
                 RemoveInternalTimer($hash);
@@ -613,7 +742,7 @@ sub homezone_dayTime($) {
         push @texts, $text;
     }
     my $daytime = $texts[ scalar @texts - 1 ];
-    for ( my $x = 0 ; $x < scalar @times ; $x++ ) {
+    for ( my $x = 0; $x < scalar @times; $x++ ) {
         my $y = $x + 1;
         $y = 0 if ( $x == scalar @times - 1 );
         $daytime = $texts[$x] if ( $y > $x && $loctime >= $times[$x] && $loctime < $times[$y] );
@@ -660,14 +789,14 @@ sub homezone_getDoorState($) {
 <a name="homezone"></a>
 <h3>homezone</h3>
 <div>
-	<ul>The idea of homezone is to create "zones" in your home, to detect presence within a zone as accurate as possible and thus be able to precisely control that zone based on presence. homezone is partly inspired by this article: <a href=https://smartisant.com/research/presence/index.php>https://smartisant.com/research/presence/index.php</a>.<br><br>
-	The challenge with presence detection based on motion sensors is that it is not very reliable in case you're not moving. homezone tries to overcome those challenges with various concepts:
-	<b>Probability of Presence:</b> If motion (or another signal that indicates presence, like pushing a button) is detected, it's very likely that someone is present. The longer no presence-signal is received, the more unlikely it becomes that someone is present. Thus homezone has a counter that decreases the likelyhood of presence if no signal is received until it finally becomes 0.<br>
-	<b>Closed zones:</b> If a room is closed, i.e. e.g. all doors are closed and presence is detected, you can be sure that someone is present - until a door is opened. Thus probability of presence will remain 100% after motion is detected in a closed zone. The counter will only start to decrease after it is opened again.
-	(..)
-	</ul>
-	
-	
+    <ul>The idea of homezone is to create "zones" in your home, to detect presence within a zone as accurate as possible and thus be able to precisely control that zone based on presence. homezone is partly inspired by this article: <a href=https://smartisant.com/research/presence/index.php>https://smartisant.com/research/presence/index.php</a>.<br><br>
+    The challenge with presence detection based on motion sensors is that it is not very reliable in case you're not moving. homezone tries to overcome those challenges with various concepts:
+    <b>Probability of Presence:</b> If motion (or another signal that indicates presence, like pushing a button) is detected, it's very likely that someone is present. The longer no presence-signal is received, the more unlikely it becomes that someone is present. Thus homezone has a counter that decreases the likelyhood of presence if no signal is received until it finally becomes 0.<br>
+    <b>Closed zones:</b> If a room is closed, i.e. e.g. all doors are closed and presence is detected, you can be sure that someone is present - until a door is opened. Thus probability of presence will remain 100% after motion is detected in a closed zone. The counter will only start to decrease after it is opened again.
+    (..)
+    </ul>
+    
+    
 
 =end html
 
