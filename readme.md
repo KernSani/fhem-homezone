@@ -1,7 +1,7 @@
-#Die Idee:
+# Die Idee:
 Das Haus wird in Zonen aufgeteilt - das können einzelne Räume sein, aber auch z.B. ein Stockwerk. Ziel ist es jederzeit zu wissen, ob sich jemand (idealerweise auch wer - aber dahin ist noch ein weiter Weg) in dieser Zone aufhält.
 
-##Anwesenheitswahrscheinlichkeit: 
+## Anwesenheitswahrscheinlichkeit: 
 Wenn eine Bewegung (oder ein anderes Ereignis, das "Anwesenheit" bedeutet) erkannt wird, ist es ziemlich wahrscheinlich (default 99%), dass jemand anwesend ist, je länger keine weitere Bewegung erkannt wird, desto unwahrscheinlicher wird es, dass noch jemand anwesend ist. Daher startet das Modul bei erkannter Bewegung einen Timer, je länger der Timer läuft, desto geringer wird die Wahrscheinlichkeit dass jemand da ist, bis sie schließlich auf 0 sinkt  (um keine zu Hohe Last zu erzeugen erfolgt der countdown in 10%-Schritten). Die Dauer des Timers kann tageszeit-abhängig gesteuert werden.
 
 Offen/geschlossen: Eine Zone kann "offen" oder "geschlossen" sein. (repräsentiert z.B. durch einen Türkontakt). Wird innerhalb einer geschlossenen Zone eine Bewegung erkannt, wird Anwesenheit als sicher angenommen (100%) und bleibt auch so, bis die Zone geöffnet wird (Wasp-in-a-box Konzept). Der Klassiker für diesen Fall ist die ausgedehnte Toilettensitzung - solange ich auf der Toilette sitze wird keine Bewegung erkannt, ich will aber trotzdem nicht plötzlich im Dunklen sitzen.
